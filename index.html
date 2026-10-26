@@ -55,6 +55,8 @@ h2{font-family:var(--display);font-weight:700;font-size:20px;margin:0 0 10px}
 .subj b{font-family:var(--display);font-size:19px}
 .track{height:13px;border:2px solid var(--line);border-radius:8px;overflow:hidden;background:var(--todo);display:flex}
 .track .tg{background:var(--green)}.track .tp{background:var(--pink)}
+.tolist{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.toitem{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border:2px dashed var(--line);border-radius:14px;padding:10px 12px;background:#FFF6EC}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .stat{border:2px solid var(--line);border-radius:14px;padding:8px 10px}
 .stat strong{display:block;font-family:var(--display);font-size:24px;line-height:1.1;font-variant-numeric:tabular-nums}
@@ -248,7 +250,7 @@ function refresh(){ if(view.name==="home")renderHome(); else if(view.name==="sub
 
 /* ---------- paket acak ---------- */
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
-function pool(subj){return BANK.questions.filter(q=>q.subj===subj&&SUPPORTED.has(q.type))}
+function pool(subj){return BANK.questions.filter(q=>q.subj===subj&&!q.set&&SUPPORTED.has(q.type))}
 function allocate(subj,n){
   const t=TOPICS[subj].map(([k,l])=>({k,l,avail:pool(subj).filter(q=>q.topic===k).length})).filter(x=>x.avail>0);
   n=Math.min(n,t.reduce((s,x)=>s+x.avail,0));
@@ -290,7 +292,7 @@ const fmtTime=t=>{const d=new Date(t),hm=String(d.getHours()).padStart(2,"0")+".
   const diff=Math.round((new Date().setHours(0,0,0,0)-new Date(t).setHours(0,0,0,0))/864e5);
   return (diff===0?"hari ini":diff===1?"kemarin":HARI[d.getDay()]+" "+d.getDate()+"/"+(d.getMonth()+1))+" "+hm};
 function subjStats(s){
-  const L=latest(), qs=BANK.questions.filter(q=>q.subj===s);
+  const L=latest(), qs=BANK.questions.filter(q=>q.subj===s&&!q.set);
   const ok=qs.filter(q=>L[q.id]&&L[q.id].ok).length, no=qs.filter(q=>L[q.id]&&!L[q.id].ok).length;
   return {total:qs.length,ok,no};
 }
@@ -316,6 +318,7 @@ function renderHome(){
         ${bars(st.ok,st.no,st.total)}
         <span class="small muted">${st.ok||st.no?`${st.ok} dikuasai · ${st.no} perlu diulang`:"Belum dicoba"}</span>
       </button>`}).join("")}</div>
+    ${tryoutCards()}
     <section class="card">
       <h2>7 hari terakhir</h2>
       <div class="stats">
@@ -334,12 +337,13 @@ function renderHome(){
       :`<p class="muted" style="margin:0">Belum ada paket yang selesai. Hasil setiap paket akan muncul di sini.</p>`}
     </section></div>`;
   $$(".subj").forEach(b=>b.onclick=()=>go({name:"subj",subj:b.dataset.s}));
+  $$(".tostart").forEach(b=>b.onclick=()=>startTryout(b.dataset.set));
 }
 
 /* ---------- Halaman mapel ---------- */
 let pref={n:20,prefer:true};
 function renderSubj(s){
-  const L=latest(), P=BANK.questions.filter(q=>q.subj===s);
+  const L=latest(), P=BANK.questions.filter(q=>q.subj===s&&!q.set);
   const wrong=pool(s).filter(q=>L[q.id]&&!L[q.id].ok).map(q=>q.id);
   const alloc=allocate(s,pref.n);
   $("#app").innerHTML=`<div class="wrap">
@@ -372,7 +376,22 @@ function renderSubj(s){
 }
 
 /* ---------- Pemain soal ---------- */
-function startPlay(subj,ids,label){play={subj,ids,label,i:0,res:{},start:Date.now()};go({name:"play"})}
+function startPlay(subj,ids,label,set){play={subj,ids,label,set,i:0,res:{},start:Date.now()};go({name:"play"})}
+function setIds(k){return BANK.questions.filter(q=>q.set===k).sort((a,b)=>a.id<b.id?-1:1).map(q=>q.id)}
+function startTryout(k){const S=BANK.sets[k];startPlay(S.subj,setIds(k),S.short,k)}
+function tryoutCards(){
+  const sets=BANK.sets||{}; if(!Object.keys(sets).length) return "";
+  return `<section class="card solid tocard"><div class="row" style="align-items:flex-start;gap:12px">
+    <span class="ic" style="width:52px;height:52px;border-radius:14px;border:2.5px solid var(--line);display:grid;place-items:center;background:var(--orange);flex:0 0 auto">
+      <svg width="30" height="30" viewBox="0 0 34 34" aria-hidden="true"><path d="M9 5h16v24H9zM13 11h8M13 16h8M13 21h5" fill="none" stroke="#2C2A35" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    <div style="flex:1;min-width:0"><h2 style="margin:0">Try Out</h2><div class="small muted">Satu paket utuh, urutan soal seperti lembar aslinya.</div></div></div>
+    <div class="tolist">${Object.entries(sets).map(([k,S])=>{
+      const runs=sessions.filter(x=>x.set===k), best=runs.reduce((m,x)=>Math.max(m,x.ok),0), last=runs[runs.length-1], n=setIds(k).length;
+      return `<div class="toitem"><div style="flex:1;min-width:0"><b style="font-family:var(--display)">${S.name}</b>
+        <div class="small muted">${n} soal · ${S.src}</div>
+        <div class="small" style="margin-top:2px">${runs.length?`Dikerjakan ${runs.length}× · terakhir <span class="score">${last.ok}/${last.n}</span> · terbaik <span class="score">${best}/${n}</span>`:`<span class="muted">Belum pernah dikerjakan</span>`}</div></div>
+        <button class="btn g tostart" data-set="${k}">${runs.length?"Kerjakan lagi":"Mulai"}</button></div>`}).join("")}</div></section>`;
+}
 function qMedia(q){
   let h="";
   if(q.svg) h+=q.svg==="cubes"?svgCubes():q.svg==="trap"?svgTrap():svgBars();
@@ -519,7 +538,7 @@ function quitPlay(){ // keluar di tengah: jawaban yang sudah diperiksa tetap ter
 }
 function finish(){
   const answered=play.ids.filter(id=>play.res[id]&&!play.res[id].skip);
-  const s={subj:play.subj,label:play.label,n:play.ids.length,ok:answered.filter(id=>play.res[id].ok).length,ts:Date.now(),dur:Date.now()-play.start,
+  const s={subj:play.subj,set:play.set||"",label:play.label,n:play.ids.length,ok:answered.filter(id=>play.res[id].ok).length,ts:Date.now(),dur:Date.now()-play.start,
     items:play.ids.map(id=>({q:id,ok:play.res[id]?.skip?null:!!play.res[id]?.ok}))};
   if(answered.length){sessions.push(s);lsSave();push("sessions",s)}
   play.summary=s; go({name:"result"});
@@ -549,11 +568,11 @@ function renderResult(){
     </section>
     <div style="display:flex;flex-direction:column;gap:10px">
       <button class="btn p" id="again" ${wrongIds.length?"":"disabled"}>Ulangi ${wrongIds.length} soal yang salah</button>
-      <div class="row"><button class="btn g" id="newp" style="flex:1">Paket baru</button><button class="btn" id="home" style="flex:1">Ke Beranda</button></div>
+      <div class="row"><button class="btn g" id="newp" style="flex:1">${s.set?"Kerjakan lagi":"Paket baru"}</button><button class="btn" id="home" style="flex:1">Ke Beranda</button></div>
     </div></div>`;
   $$(".nums button").forEach(b=>b.onclick=()=>{play.i=+b.dataset.i;view={name:"play"};renderQ(true);window.scrollTo(0,0)});
   $("#again").onclick=()=>wrongIds.length&&startPlay(s.subj,wrongIds,"Ulangi yang salah");
-  $("#newp").onclick=()=>go({name:"subj",subj:s.subj});
+  $("#newp").onclick=()=>s.set?startTryout(s.set):go({name:"subj",subj:s.subj});
   $("#home").onclick=()=>go({name:"home"});
 }
 
