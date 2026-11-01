@@ -57,6 +57,8 @@ h2{font-family:var(--display);font-weight:700;font-size:20px;margin:0 0 10px}
 .track .tg{background:var(--green)}.track .tp{background:var(--pink)}
 .tolist{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .toitem{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border:2px dashed var(--line);border-radius:14px;padding:10px 12px;background:#FFF6EC}
+.rbtns{flex:1 1 auto}.rbtns .btn{flex:1}
+.resume{display:flex;flex-direction:column;gap:10px;align-items:stretch;background:var(--hl);border:2.5px solid var(--line);border-radius:18px;padding:12px 14px;box-shadow:4px 4px 0 var(--line)}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .stat{border:2px solid var(--line);border-radius:14px;padding:8px 10px}
 .stat strong{display:block;font-family:var(--display);font-size:24px;line-height:1.1;font-variant-numeric:tabular-nums}
@@ -199,7 +201,6 @@ tr.right .rmk{color:var(--ok)} tr.wrong .rmk{color:var(--no)}
 </style>
 </head>
 <body>
-
 <div class="wrap">
   <header class="bar"><span class="tag">VI SD</span><h1>Latihan TKA</h1><span class="who">Malika</span></header>
   <main id="app"><div class="card muted">Memuat soal…</div></main>
@@ -231,6 +232,12 @@ async function initDb(){
     if(!window.claude||!window.claude.use) return;
     db=await window.claude.use("db"); if(!db) return;
     db.collection("attempts").orderBy("ts","asc").onSnapshot(s=>{dbOK=true;attempts=merge(attempts,s.docs.map(d=>({id:d.id,...d.data()})),"attempts");lsSave();refresh()},()=>{dbOK=false;renderFoot()});
+    db.doc("active/current").get().then(d=>{ // paket belum selesai dari perangkat lain
+      if(!d.exists) return; const r=d.data();
+      if(!active||(r.upd||0)>(active.upd||0)){active=r;try{localStorage.setItem(LSA,JSON.stringify(r))}catch(e){};refresh()}
+      else if((active.upd||0)>(r.upd||0)) db.doc("active/current").set(active).catch(()=>{});
+    }).catch(()=>{});
+    if(active&&!active.upd) saveActive();
     db.collection("sessions").orderBy("ts","asc").onSnapshot(s=>{sessions=merge(sessions,s.docs.map(d=>({id:d.id,...d.data()})),"sessions");lsSave();refresh()},()=>{});
   }catch(e){db=null}
 }
@@ -307,6 +314,7 @@ function renderHome(){
   const per=[];for(let i=6;i>=0;i--){const d=new Date(now);d.setDate(d.getDate()-i);const k=dayKey(d);const xs=attempts.filter(a=>dayKey(a.ts)===k);per.push({d,g:xs.filter(a=>a.ok).length,r:xs.filter(a=>!a.ok).length})}
   const mx=Math.max(5,...per.map(p=>p.g+p.r));
   $("#app").innerHTML=`<div class="wrap">
+    ${resumeBanner()}
     <section style="display:flex;flex-direction:column;gap:4px">
       <p class="hello">Halo, <span>Malika</span>!</p>
       <p class="muted" style="margin:0">Mau latihan apa hari ini? Pilih mata pelajarannya dulu.</p>
@@ -333,10 +341,11 @@ function renderHome(){
     <section class="card"><h2>Paket terakhir</h2>
       ${sessions.length?`<ul class="log">${sessions.slice(-6).reverse().map(s=>`<li><span class="dot" style="background:${SUBJ[s.subj]?.color||"var(--todo)"}"></span>
         <span>${SUBJ[s.subj]?.name||""} · ${s.label}<br><small class="muted">${fmtTime(s.ts)} · ${Math.max(1,Math.round((s.dur||0)/60000))} menit</small></span>
-        <span class="score">${s.ok}/${s.n}</span></li>`).join("")}</ul>`
+        <span class="score">${s.ok}/${s.n}${s.done&&s.done<s.n?`<br><small class="muted" style="font-weight:400">dijawab ${s.done}</small>`:""}</span></li>`).join("")}</ul>`
       :`<p class="muted" style="margin:0">Belum ada paket yang selesai. Hasil setiap paket akan muncul di sini.</p>`}
     </section></div>`;
   $$(".subj").forEach(b=>b.onclick=()=>go({name:"subj",subj:b.dataset.s}));
+  bindResume();
   $$(".tostart").forEach(b=>b.onclick=()=>startTryout(b.dataset.set));
 }
 
@@ -350,6 +359,7 @@ function renderSubj(s){
     <div class="row"><button class="btn" id="back">← Beranda</button><span class="spacer"></span>
       <span class="ic" style="width:38px;height:38px;border-radius:10px;border:2.5px solid var(--line);display:grid;place-items:center;background:${SUBJ[s].color}">${icon(s,22)}</span>
       <b style="font-family:var(--display);font-size:22px">${SUBJ[s].name}</b></div>
+    ${resumeBanner(s)}
     <section class="card solid" style="display:flex;flex-direction:column;gap:10px">
       <h2 style="margin:0">Paket acak</h2>
       <div class="muted small">Soal diacak dari semua sumber, tapi setiap materi pasti kebagian.</div>
@@ -367,6 +377,7 @@ function renderSubj(s){
       <div class="legend" style="margin-top:8px"><span><i style="background:var(--green)"></i>dikuasai</span><span><i style="background:var(--pink)"></i>perlu diulang</span><span><i style="background:var(--todo)"></i>belum</span></div>
     </section></div>`;
   $("#back").onclick=()=>go({name:"home"});
+  bindResume();
   $$(".seg button").forEach(b=>b.onclick=()=>{pref.n=+b.dataset.n;renderSubj(s)});
   $("#prefer").onchange=e=>pref.prefer=e.target.checked;
   $("#start").onclick=()=>startPlay(s,buildPacket(s,pref.n,pref.prefer),`Paket acak ${pref.n}`);
@@ -376,7 +387,46 @@ function renderSubj(s){
 }
 
 /* ---------- Pemain soal ---------- */
-function startPlay(subj,ids,label,set){play={subj,ids,label,set,i:0,res:{},start:Date.now()};go({name:"play"})}
+function startPlay(subj,ids,label,set){
+  if(active&&answeredCount(active)) recordSession(active); // paket lama yang belum selesai otomatis masuk riwayat
+  play={subj,ids,label,set,i:0,res:{},start:Date.now(),spent:0,tick:Date.now()};saveActive();go({name:"play"})}
+
+/* ---------- paket yang belum selesai (bisa dilanjutkan) ---------- */
+const LSA="tka-malika-active";
+let active=null;
+try{active=JSON.parse(localStorage.getItem(LSA)||"null")}catch(e){}
+function answeredCount(p){return Object.values(p.res||{}).filter(r=>!r.skip).length}
+function saveActive(){
+  if(!play||play.summary) return;
+  const now=Date.now(); play.spent=(play.spent||0)+(now-(play.tick||now)); play.tick=now;
+  const {summary,...st}=play; st.upd=now; active=JSON.parse(JSON.stringify(st));
+  try{localStorage.setItem(LSA,JSON.stringify(active))}catch(e){}
+  if(db) db.doc("active/current").set(active).catch(()=>{});
+}
+function clearActive(){
+  active=null; try{localStorage.removeItem(LSA)}catch(e){}
+  if(db) db.doc("active/current").delete().catch(()=>{});
+}
+function resumeActive(){
+  if(!active) return; play=JSON.parse(JSON.stringify(active)); play.tick=Date.now();
+  play.ids=play.ids.filter(id=>QBY[id]); play.i=Math.min(play.i||0,play.ids.length-1);
+  view={name:"play"}; renderQ(); renderFoot(); window.scrollTo(0,0);
+}
+function endActive(){ // "Akhiri paket" dari beranda / halaman mapel
+  if(!active) return;
+  if(!answeredCount(active)){clearActive();refresh();return}
+  play=JSON.parse(JSON.stringify(active)); play.tick=Date.now(); finish();
+}
+function resumeBanner(subj){
+  if(!active||(subj&&active.subj!==subj)||!BANK) return "";
+  const done=answeredCount(active), n=active.ids.length;
+  return `<section class="resume" role="region" aria-label="Paket yang belum selesai">
+    <div style="flex:1;min-width:0"><div class="small muted" style="font-family:var(--display);font-weight:600;letter-spacing:.4px">BELUM SELESAI</div>
+      <b style="font-family:var(--display)">${SUBJ[active.subj]?.name||""} · ${active.label}</b>
+      <div class="small">Soal ${Math.min((active.i||0)+1,n)} dari ${n} · ${done} sudah dijawab · ${fmtTime(active.upd||active.start)}</div></div>
+    <div class="row rbtns" style="gap:8px"><button class="btn g" id="resume">Lanjutkan paket</button><button class="btn" id="endact">${done?"Akhiri paket":"Batalkan"}</button></div></section>`;
+}
+function bindResume(){ if($("#resume"))$("#resume").onclick=resumeActive; if($("#endact"))$("#endact").onclick=endActive; }
 function setIds(k){return BANK.questions.filter(q=>q.set===k).sort((a,b)=>a.id<b.id?-1:1).map(q=>q.id)}
 function startTryout(k){const S=BANK.sets[k];startPlay(S.subj,setIds(k),S.short,k)}
 function tryoutCards(){
@@ -408,6 +458,7 @@ function psgHtml(p,nums){
 }
 let qs=null; // state soal aktif
 function renderQ(review){
+  if(!review) saveActive();
   const id=play.ids[play.i], q=QBY[id], n=play.ids.length;
   const stored=play.res[id];
   qs={sel:q.type==="bs"||q.type==="klas"?q.rows.map(()=>null):q.type==="jodoh"?q.left.map(()=>null):q.type==="ganda"?new Set():null,checked:false,t0:Date.now()};
@@ -511,7 +562,7 @@ function check(q,replay,review){
   }
   if(!replay){
     const dur=Date.now()-qs.t0;
-    play.res[q.id]={ok,score,sel:q.type==="ganda"?[...qs.sel]:qs.sel};
+    play.res[q.id]={ok,score,sel:q.type==="ganda"?[...qs.sel]:qs.sel};saveActive();
     const a={q:q.id,subj:q.subj,ok,score,ts:Date.now(),dur};attempts.push(a);lsSave();push("attempts",a);
   }
   const star=`<svg width="44" height="44" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 4l5.9 12 13.1 1.9-9.5 9.3 2.3 13.1L24 34.1 12.2 40.3l2.3-13.1L5 17.9l13.1-1.9z" fill="${ok?"#F7D97E":"#F5B3C3"}" stroke="#3A3844" stroke-width="2.5" stroke-linejoin="round"/>${ok?'<path d="M17 24.5l4.5 4.5 9-9" fill="none" stroke="#3A3844" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>':'<path d="M20 20l8 8M28 20l-8 8" stroke="#3A3844" stroke-width="3" stroke-linecap="round"/>'}</svg>`;
@@ -532,15 +583,20 @@ function next(review){
   if(play.i<play.ids.length-1){play.i++;renderQ(review);window.scrollTo(0,0)}
   else review?go({name:"result"}):finish();
 }
-function quitPlay(){ // keluar di tengah: jawaban yang sudah diperiksa tetap tersimpan
-  const done=Object.values(play.res).filter(r=>!r.skip).length;
-  if(done) finish(); else go({name:"subj",subj:play.subj});
+function quitPlay(){ // keluar di tengah: paket disimpan dan bisa dilanjutkan
+  saveActive();
+  if(!answeredCount(play)&&(play.i||0)===0) clearActive();
+  play.set?go({name:"home"}):go({name:"subj",subj:play.subj});
+}
+function recordSession(p){
+  const answered=p.ids.filter(id=>p.res[id]&&!p.res[id].skip);
+  const s={subj:p.subj,set:p.set||"",label:p.label,n:p.ids.length,done:answered.length,ok:answered.filter(id=>p.res[id].ok).length,ts:Date.now(),
+    dur:(p.spent||0)+(Date.now()-(p.tick||Date.now())),items:p.ids.map(id=>({q:id,ok:p.res[id]?.skip?null:!!p.res[id]?.ok}))};
+  if(answered.length){sessions.push(s);lsSave();push("sessions",s)}
+  return s;
 }
 function finish(){
-  const answered=play.ids.filter(id=>play.res[id]&&!play.res[id].skip);
-  const s={subj:play.subj,set:play.set||"",label:play.label,n:play.ids.length,ok:answered.filter(id=>play.res[id].ok).length,ts:Date.now(),dur:Date.now()-play.start,
-    items:play.ids.map(id=>({q:id,ok:play.res[id]?.skip?null:!!play.res[id]?.ok}))};
-  if(answered.length){sessions.push(s);lsSave();push("sessions",s)}
+  const s=recordSession(play); clearActive();
   play.summary=s; go({name:"result"});
 }
 
@@ -596,6 +652,8 @@ function renderFoot(){
 fetch("bank.json").then(r=>r.json()).then(b=>{
   BANK=b;TOPICS=b.topics;b.questions.forEach(q=>QBY[q.id]=q);b.passages.forEach(p=>PSG[p.id]=p);
   go({name:"home"});initDb();
+  addEventListener("pagehide",()=>{if(view.name==="play"&&play&&!play.summary)saveActive()});
+  document.addEventListener("visibilitychange",()=>{if(document.hidden&&view.name==="play"&&play&&!play.summary)saveActive()});
 }).catch(()=>{$("#app").innerHTML=`<div class="card">Soal belum bisa dimuat. Coba muat ulang halaman.</div>`});
 </script>
 
