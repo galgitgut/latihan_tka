@@ -59,6 +59,12 @@ h2{font-family:var(--display);font-weight:700;font-size:20px;margin:0 0 10px}
 .toitem{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border:2px dashed var(--line);border-radius:14px;padding:10px 12px;background:#FFF6EC}
 .rbtns{flex:1 1 auto}.rbtns .btn{flex:1}
 .resume{display:flex;flex-direction:column;gap:10px;align-items:stretch;background:var(--hl);border:2.5px solid var(--line);border-radius:18px;padding:12px 14px;box-shadow:4px 4px 0 var(--line)}
+.whob{font-family:var(--display);font-weight:600;font-size:13px;border:2px solid var(--line);border-radius:999px;background:var(--yellow);padding:3px 10px;white-space:nowrap}
+.inp{width:100%;font:inherit;font-size:17px;padding:8px 10px;border:2.5px solid var(--line);border-radius:12px;background:#fff;color:var(--ink)}
+.lform{display:flex;flex-direction:column;gap:8px}.lform label{font-family:var(--display);font-weight:600;font-size:14px;margin-top:4px}
+.code{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:2px;border:2.5px dashed var(--line);border-radius:14px;padding:6px 16px;background:var(--hl);user-select:all}
+.rdet summary{display:flex;gap:10px;align-items:center;cursor:pointer;list-style:none}.rdet summary::-webkit-details-marker{display:none}
+.rtab td,.rtab th{text-align:center}.rtab td:first-child{text-align:left}.rtab tr.bad td{background:var(--nobg)}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .stat{border:2px solid var(--line);border-radius:14px;padding:8px 10px}
 .stat strong{display:block;font-family:var(--display);font-size:24px;line-height:1.1;font-variant-numeric:tabular-nums}
@@ -202,12 +208,13 @@ tr.right .rmk{color:var(--ok)} tr.wrong .rmk{color:var(--no)}
 </head>
 <body>
 <div class="wrap">
-  <header class="bar"><span class="tag">VI SD</span><h1>Latihan TKA</h1><span class="who">Malika</span></header>
+  <header class="bar"><span class="tag">VI SD</span><h1>Latihan TKA</h1><button class="whob" id="raporBtn">Rapor ortu</button></header>
   <main id="app"><div class="card muted">Memuat soal…</div></main>
   <div class="foot" id="foot"></div>
 </div>
 <div class="confetti" id="confetti" aria-hidden="true"></div>
 
+<script type="module" src="firebase-store.js"></script>
 <script src="legacy.js"></script>
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -227,19 +234,51 @@ const LS="tka-malika-v2";
 let attempts=[], sessions=[], db=null, dbOK=false;
 try{const v=JSON.parse(localStorage.getItem(LS)||"{}");attempts=v.a||[];sessions=v.s||[]}catch(e){}
 const lsSave=()=>{try{localStorage.setItem(LS,JSON.stringify({a:attempts.slice(-4000),s:sessions.slice(-300)}))}catch(e){}};
+/* ---------- Firebase: kode keluarga ---------- */
+const LSF="tka-family";
+let famCode=null, storeReady=false, linkErr="", devCache=null;
+try{famCode=localStorage.getItem(LSF)}catch(e){}
+function whenStore(){return new Promise(r=>{if(window.TKAStore)return r(window.TKAStore);addEventListener("tkastore",()=>r(window.TKAStore),{once:true})})}
+function fbMsg(e){
+  const c=(e&&e.code)||"", m=(e&&e.message)||String(e);
+  if(/operation-not-allowed|admin-restricted/.test(c)) return "Login anonim belum aktif di Firebase (Authentication → Sign-in method → Anonymous → Enable).";
+  if(/permission-denied/.test(c)) return "Ditolak oleh aturan Firestore. Pastikan Rules dari README sudah di-Publish.";
+  if(/unavailable|network/.test(c)) return "Tidak ada koneksi internet. Coba lagi setelah online.";
+  if(/unauthorized-domain/.test(c)) return "Domain ini belum diizinkan di Firebase (Authentication → Settings → Authorized domains).";
+  return m;
+}
 async function initDb(){
+  const S=await whenStore(); storeReady=true;
+  if(!famCode){refresh();return}
+  try{await S.signIn()}catch(e){linkErr=fbMsg(e);renderFoot();return}
+  linkErr=""; db=S.familyDb(famCode); refresh();
   try{
-    if(!window.claude||!window.claude.use) return;
-    db=await window.claude.use("db"); if(!db) return;
-    db.collection("attempts").orderBy("ts","asc").onSnapshot(s=>{dbOK=true;attempts=merge(attempts,s.docs.map(d=>({id:d.id,...d.data()})),"attempts");lsSave();refresh()},()=>{dbOK=false;renderFoot()});
+    const fail=e=>{dbOK=false;linkErr=fbMsg(e);renderFoot()};
+    db.collection("attempts").orderBy("ts","asc").onSnapshot(s=>{dbOK=true;linkErr="";attempts=merge(attempts,s.docs.map(d=>({id:d.id,...d.data()})),"attempts");lsSave();refresh()},fail);
     db.doc("active/current").get().then(d=>{ // paket belum selesai dari perangkat lain
       if(!d.exists) return; const r=d.data();
       if(!active||(r.upd||0)>(active.upd||0)){active=r;try{localStorage.setItem(LSA,JSON.stringify(r))}catch(e){};refresh()}
       else if((active.upd||0)>(r.upd||0)) db.doc("active/current").set(active).catch(()=>{});
     }).catch(()=>{});
     if(active&&!active.upd) saveActive();
-    db.collection("sessions").orderBy("ts","asc").onSnapshot(s=>{sessions=merge(sessions,s.docs.map(d=>({id:d.id,...d.data()})),"sessions");lsSave();refresh()},()=>{});
-  }catch(e){db=null}
+    db.collection("sessions").orderBy("ts","asc").onSnapshot(s=>{sessions=merge(sessions,s.docs.map(d=>({id:d.id,...d.data()})),"sessions");lsSave();refresh()},fail);
+  }catch(e){db=null;linkErr=fbMsg(e);renderFoot()}
+}
+async function linkNew(label){
+  const code=await window.TKAStore.createFamily(label);
+  famCode=code;try{localStorage.setItem(LSF,code)}catch(e){}
+  initDb(); return code; // riwayat lokal yang belum tersimpan otomatis ikut terkirim
+}
+async function linkJoin(raw,label){
+  const code=await window.TKAStore.joinFamily(raw,label);
+  attempts=[];sessions=[];lsSave();clearActive(); // pakai riwayat dari keluarga yang digabung
+  famCode=code;try{localStorage.setItem(LSF,code)}catch(e){}
+  initDb(); return code;
+}
+async function unlink(){
+  try{if(db&&db.leave)await db.leave()}catch(e){}
+  try{localStorage.removeItem(LSF);localStorage.removeItem(LS);localStorage.removeItem(LSA)}catch(e){}
+  location.reload();
 }
 function merge(local,remote,col){
   const seen=new Set(remote.map(a=>a.ts+"|"+a.q+"|"+(a.subj||"")));
@@ -253,7 +292,7 @@ async function push(col,a){
 }
 const qid=a=>typeof a.q==="number"?"drl-"+String(a.q).padStart(2,"0"):a.q; // riwayat app lama: nomor 1–30
 function latest(){const m={};for(const a of attempts){m[qid(a)]=a}return m}
-function refresh(){ if(view.name==="home")renderHome(); else if(view.name==="subj")renderSubj(view.subj); renderFoot() }
+function refresh(){ if(view.name==="home")renderHome(); else if(view.name==="subj")renderSubj(view.subj); else if(view.name==="rapor")renderRapor(); renderFoot() }
 
 /* ---------- paket acak ---------- */
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
@@ -290,7 +329,7 @@ function buildPacket(subj,n,prefer){
 /* ---------- navigasi ---------- */
 let view={name:"home"}, play=null, confirmReset=false;
 function go(v){view=v;confirmReset=false;
-  if(v.name==="home")renderHome(); else if(v.name==="subj")renderSubj(v.subj); else if(v.name==="play")renderQ(); else if(v.name==="result")renderResult();
+  if(v.name==="home")renderHome(); else if(v.name==="subj")renderSubj(v.subj); else if(v.name==="play")renderQ(); else if(v.name==="result")renderResult(); else if(v.name==="link")renderLink(); else if(v.name==="rapor")renderRapor();
   renderFoot(); window.scrollTo(0,0)}
 
 const icon=(s,size=30)=>`<svg width="${size}" height="${size}" viewBox="0 0 34 34" aria-hidden="true">${SUBJ[s].icon}</svg>`;
@@ -315,6 +354,9 @@ function renderHome(){
   const mx=Math.max(5,...per.map(p=>p.g+p.r));
   $("#app").innerHTML=`<div class="wrap">
     ${resumeBanner()}
+    ${!famCode&&storeReady?`<section class="resume" style="background:#EAF5FB"><div><div class="small muted" style="font-family:var(--display);font-weight:600;letter-spacing:.4px">RIWAYAT BELUM TERSAMBUNG</div>
+      <div class="small">Sambungkan supaya riwayat tersimpan online dan Ayah/Ibu bisa melihat progres dari HP sendiri.</div></div>
+      <div class="row rbtns"><button class="btn b" id="golink">Sambungkan</button></div></section>`:""}
     <section style="display:flex;flex-direction:column;gap:4px">
       <p class="hello">Halo, <span>Malika</span>!</p>
       <p class="muted" style="margin:0">Mau latihan apa hari ini? Pilih mata pelajarannya dulu.</p>
@@ -345,7 +387,7 @@ function renderHome(){
       :`<p class="muted" style="margin:0">Belum ada paket yang selesai. Hasil setiap paket akan muncul di sini.</p>`}
     </section></div>`;
   $$(".subj").forEach(b=>b.onclick=()=>go({name:"subj",subj:b.dataset.s}));
-  bindResume();
+  bindResume(); if($("#golink"))$("#golink").onclick=()=>go({name:"link"});
   $$(".tostart").forEach(b=>b.onclick=()=>startTryout(b.dataset.set));
 }
 
@@ -600,6 +642,124 @@ function finish(){
   play.summary=s; go({name:"result"});
 }
 
+
+/* ---------- Sambungkan (kode keluarga) ---------- */
+function renderLink(){
+  const done=view.code, ok=!!window.TKAStore;
+  $("#app").innerHTML=`<div class="wrap">
+    <div class="row"><button class="btn" id="back">← Beranda</button></div>
+    ${done?`<section class="card solid" style="text-align:center;display:flex;flex-direction:column;gap:10px;align-items:center">
+      <h2 style="margin:0">Tersambung!</h2>
+      <div class="small muted">${view.joined?"Perangkat ini sekarang memakai riwayat dari kode berikut.":"Ini kode keluarga. Di HP Ayah/Ibu, pilih “Gabung dengan kode” lalu ketik kode ini."}</div>
+      <div class="code" id="codeTxt">${done}</div>
+      <button class="btn" id="copy">Salin kode</button>
+      <div class="small muted">Kode ini berfungsi seperti kunci. Simpan baik-baik dan jangan dibagikan ke orang lain. Kode bisa dilihat lagi di halaman Rapor ortu.</div>
+      <button class="btn g" id="fin" style="align-self:stretch">Selesai</button></section>`
+    :`<section class="card"><h2>Sambungkan riwayat</h2>
+      <p class="small muted" style="margin:0">Riwayat latihan akan tersimpan online. Ayah/Ibu bisa melihat progres dari HP sendiri, dan Malika bisa pindah perangkat tanpa kehilangan riwayat.</p>
+      ${ok?"":`<p class="small" style="color:var(--no);margin:8px 0 0">Firebase belum termuat. Periksa internet, lalu muat ulang halaman.</p>`}</section>
+    <section class="card solid lform"><h2 style="margin:0">Mulai baru</h2>
+      <div class="small muted">Pilih ini <b>di perangkat Malika</b>, sekali saja. Riwayat yang sudah ada di perangkat ini ikut disimpan.</div>
+      <label for="lnName">Nama perangkat</label><input id="lnName" class="inp" value="HP Malika" maxlength="40">
+      <button class="btn g" id="lnNew" ${ok?"":"disabled"}>Buat kode keluarga</button></section>
+    <section class="card solid lform"><h2 style="margin:0">Gabung dengan kode</h2>
+      <div class="small muted">Pilih ini <b>di perangkat Ayah/Ibu</b> atau perangkat kedua Malika. Riwayat di perangkat ini akan diganti dengan riwayat dari kode tersebut.</div>
+      <label for="jnCode">Kode keluarga</label><input id="jnCode" class="inp" placeholder="TKA-XXXXXXXX" autocapitalize="characters" autocomplete="off" spellcheck="false">
+      <label for="jnName">Nama perangkat</label><input id="jnName" class="inp" value="HP Ayah" maxlength="40">
+      <button class="btn b" id="lnJoin" ${ok?"":"disabled"}>Gabung</button></section>
+    <div id="lnMsg" class="small" role="status" style="min-height:1.4em"></div>`}
+  </div>`;
+  $("#back").onclick=()=>go({name:"home"});
+  if(done){
+    $("#fin").onclick=()=>go({name:"home"});
+    $("#copy").onclick=()=>{const t=done;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>{$("#copy").textContent="Tersalin"}).catch(()=>{const r=document.createRange();r.selectNodeContents($("#codeTxt"));const g=getSelection();g.removeAllRanges();g.addRange(r)})};
+    return;
+  }
+  const busy=(b,on,txt)=>{b.disabled=on;if(txt)b.textContent=txt};
+  const msg=(t,bad)=>{const m=$("#lnMsg");m.textContent=t;m.style.color=bad?"var(--no)":"var(--soft)"};
+  if($("#lnNew"))$("#lnNew").onclick=async()=>{const b=$("#lnNew");busy(b,true,"Membuat kode…");msg("");
+    try{const code=await linkNew($("#lnName").value.trim());view={name:"link",code};renderLink();renderFoot()}
+    catch(e){busy(b,false,"Buat kode keluarga");msg(fbMsg(e),true)}};
+  if($("#lnJoin"))$("#lnJoin").onclick=async()=>{const b=$("#lnJoin");const c=$("#jnCode").value;
+    if(!window.TKAStore.normalizeCode(c)){msg("Ketik kode keluarganya dulu.",true);return}
+    busy(b,true,"Menyambungkan…");msg("");
+    try{const code=await linkJoin(c,$("#jnName").value.trim());view={name:"link",code,joined:true};renderLink();renderFoot()}
+    catch(e){busy(b,false,"Gabung");msg(fbMsg(e),true)}};
+}
+
+/* ---------- Rapor ortu ---------- */
+function renderRapor(){
+  if(!BANK) return;
+  const L=latest(), subjOf=a=>a.subj||(QBY[qid(a)]||{}).subj, topicOf=a=>(QBY[qid(a)]||{}).topic;
+  const lastTs=Math.max(0,...attempts.map(a=>a.ts||0));
+  const pct=(a,b)=>b?Math.round(a/b*100)+"%":"–";
+  const weak=[];
+  const subjHtml=Object.keys(SUBJ).map(s=>{
+    const qs=BANK.questions.filter(q=>q.subj===s&&!q.set), att=attempts.filter(a=>subjOf(a)===s);
+    const g=qs.filter(q=>L[q.id]&&L[q.id].ok).length, r=qs.filter(q=>L[q.id]&&!L[q.id].ok).length;
+    const rows=TOPICS[s].map(([k,l])=>{
+      const tq=qs.filter(q=>q.topic===k), ta=att.filter(a=>topicOf(a)===k), tok=ta.filter(a=>a.ok).length;
+      const tg=tq.filter(q=>L[q.id]&&L[q.id].ok).length, tried=tq.filter(q=>L[q.id]).length;
+      const acc=ta.length?tok/ta.length:null, bad=ta.length>=3&&acc<0.6;
+      if(ta.length>=3) weak.push({s,l,acc,n:ta.length});
+      return `<tr class="${bad?"bad":""}"><td>${l}</td><td>${tried}/${tq.length}</td><td>${tg}</td><td>${acc===null?"–":Math.round(acc*100)+"%"}</td></tr>`}).join("");
+    return `<details class="card rdet" ${att.length?"open":""}><summary><span class="ic" style="width:34px;height:34px;border-radius:10px;border:2.5px solid var(--line);display:grid;place-items:center;background:${SUBJ[s].color}">${icon(s,20)}</span>
+        <b style="font-family:var(--display);font-size:18px;flex:1">${SUBJ[s].name}</b><span class="small muted">${g}/${qs.length} dikuasai</span></summary>
+      <div class="stats" style="margin:10px 0">
+        <div class="stat" style="background:#EFF7E4"><strong>${g}</strong><small>dikuasai</small></div>
+        <div class="stat" style="background:#FDE9EE"><strong>${r}</strong><small>perlu diulang</small></div>
+        <div class="stat" style="background:#EAF5FB"><strong>${att.length}</strong><small>jawaban</small></div>
+        <div class="stat" style="background:#FDF3D6"><strong>${pct(att.filter(a=>a.ok).length,att.length)}</strong><small>ketepatan</small></div></div>
+      <div class="tbl"><table class="rtab"><thead><tr><th style="text-align:left">Materi</th><th>Dicoba</th><th>Dikuasai</th><th>Tepat</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="small muted" style="margin-top:4px">Baris merah: ketepatan di bawah 60% (minimal 3 jawaban).</div></details>`}).join("");
+  weak.sort((a,b)=>a.acc-b.acc);
+  const focus=weak.filter(w=>w.acc<0.7).slice(0,4);
+  // 14 hari terakhir
+  const d0=new Date();d0.setHours(0,0,0,0);const days=[];
+  for(let i=0;i<14;i++){const d=new Date(d0);d.setDate(d.getDate()-i);const k=dayKey(d);const xs=attempts.filter(a=>dayKey(a.ts)===k);
+    if(xs.length)days.push({d,n:xs.length,ok:xs.filter(a=>a.ok).length,min:Math.round(xs.reduce((t,a)=>t+Math.min(a.dur||0,600000),0)/60000),subs:[...new Set(xs.map(subjOf))].map(x=>SUBJ[x]?.name||"").join(", ")})}
+  const sets=BANK.sets||{};
+  const toHtml=Object.entries(sets).map(([k,S])=>{const runs=sessions.filter(x=>x.set===k).slice().reverse();
+    return `<div style="margin-bottom:8px"><b style="font-family:var(--display)">${S.name}</b>
+      ${runs.length?`<ul class="log" style="margin-top:6px">${runs.map(x=>`<li><span class="dot" style="background:var(--orange)"></span><span>${fmtTime(x.ts)}<br><small class="muted">${Math.max(1,Math.round((x.dur||0)/60000))} menit${x.done&&x.done<x.n?` · dijawab ${x.done}`:""}</small></span><span class="score">${x.ok}/${x.n}</span></li>`).join("")}</ul>`:`<div class="small muted">Belum pernah dikerjakan.</div>`}</div>`}).join("");
+  const recent=sessions.filter(x=>!x.set).slice(-15).reverse();
+  $("#app").innerHTML=`<div class="wrap">
+    <div class="row"><button class="btn" id="back">← Beranda</button><span class="spacer"></span><b style="font-family:var(--display);font-size:22px">Rapor Malika</b></div>
+    <section class="card solid">
+      <div class="small muted">${lastTs?`Terakhir latihan: ${fmtTime(lastTs)}`:"Belum ada latihan yang tercatat."}${famCode?"":" · Riwayat belum tersambung, jadi yang tampil hanya riwayat di perangkat ini."}</div>
+      <h2 style="margin:8px 0 6px">Perlu perhatian</h2>
+      ${focus.length?`<ul style="margin:0;padding-left:1.2em">${focus.map(w=>`<li><b>${w.l}</b> <span class="muted small">(${SUBJ[w.s].name})</span> · tepat ${Math.round(w.acc*100)}% dari ${w.n} jawaban</li>`).join("")}</ul>`
+        :`<div class="small muted">${weak.length?"Belum ada materi dengan ketepatan di bawah 70%. Bagus!":"Belum cukup data. Materi akan muncul di sini setelah dijawab minimal 3 kali."}</div>`}
+    </section>
+    ${subjHtml}
+    <section class="card"><h2>Aktivitas 14 hari terakhir</h2>
+      ${days.length?`<div class="tbl"><table class="rtab"><thead><tr><th style="text-align:left">Hari</th><th>Soal</th><th>Tepat</th><th>Menit</th></tr></thead><tbody>
+        ${days.map(x=>`<tr><td>${HARI[x.d.getDay()]} ${x.d.getDate()}/${x.d.getMonth()+1}<br><small class="muted">${x.subs}</small></td><td>${x.n}</td><td>${pct(x.ok,x.n)}</td><td>${x.min}</td></tr>`).join("")}</tbody></table></div>`
+        :`<div class="small muted">Belum ada latihan dalam 14 hari terakhir.</div>`}
+    </section>
+    <section class="card"><h2>Try Out</h2>${toHtml||`<div class="small muted">Belum ada paket Try Out.</div>`}</section>
+    <section class="card"><h2>Riwayat paket</h2>
+      ${recent.length?`<ul class="log">${recent.map(x=>`<li><span class="dot" style="background:${SUBJ[x.subj]?.color||"var(--todo)"}"></span><span>${SUBJ[x.subj]?.name||""} · ${x.label}<br><small class="muted">${fmtTime(x.ts)} · ${Math.max(1,Math.round((x.dur||0)/60000))} menit</small></span><span class="score">${x.ok}/${x.n}${x.done&&x.done<x.n?`<br><small class="muted" style="font-weight:400">dijawab ${x.done}</small>`:""}</span></li>`).join("")}</ul>`:`<div class="small muted">Belum ada paket yang selesai.</div>`}
+    </section>
+    <section class="card"><h2>Perangkat & kode keluarga</h2>
+      ${famCode?`<div class="small">Kode keluarga: <span class="code" style="font-size:18px;padding:2px 10px" id="codeTxt">${famCode}</span></div>
+        <div class="small muted" style="margin:6px 0">Ketik kode ini lewat “Gabung dengan kode” untuk menyambungkan perangkat lain. Jangan dibagikan ke orang lain.</div>
+        <div id="devs" class="small">${devCache?devList(devCache):"Memuat daftar perangkat…"}</div>
+        <div class="row" style="margin-top:10px">${view.confirmLeave?`<span class="small">Putuskan perangkat ini? Riwayat tetap aman di Firebase, tapi perangkat ini tidak bisa melihatnya lagi sampai digabung ulang.</span><button class="btn p" id="lvY">Ya, putuskan</button><button class="btn" id="lvN">Batal</button>`:`<button class="linkbtn" id="lv">Putuskan perangkat ini</button>`}</div>`
+      :`<div class="small muted">Perangkat ini belum tersambung.</div><button class="btn b" id="golink2" style="margin-top:8px">Sambungkan</button>`}
+    </section></div>`;
+  $("#back").onclick=()=>go({name:"home"});
+  if($("#golink2"))$("#golink2").onclick=()=>go({name:"link"});
+  if($("#lv"))$("#lv").onclick=()=>{view.confirmLeave=true;renderRapor()};
+  if($("#lvN"))$("#lvN").onclick=()=>{view.confirmLeave=false;renderRapor()};
+  if($("#lvY"))$("#lvY").onclick=()=>unlink();
+  if(famCode&&db&&db.devices&&!devCache) db.devices().then(d=>{devCache=d;if($("#devs"))$("#devs").innerHTML=devList(d)}).catch(e=>{if($("#devs"))$("#devs").textContent="Daftar perangkat belum bisa dimuat. "+fbMsg(e)});
+}
+function devList(d){
+  const ts=x=>x&&x.toDate?fmtTime(x.toDate().getTime()):"";
+  return `<b style="font-family:var(--display)">Perangkat tersambung</b><ul style="margin:4px 0 0;padding-left:1.2em">${d.map(x=>`<li>${x.label||"Perangkat"}${x.me?" <b>(perangkat ini)</b>":""} <span class="muted">· ${ts(x.pairedAt)}</span></li>`).join("")}</ul>`;
+}
+
 /* ---------- Hasil paket ---------- */
 function renderResult(){
   const s=play.summary, pct=s.n?s.ok/s.n:0;
@@ -640,7 +800,7 @@ function confetti(){
 }
 function renderFoot(){
   const f=$("#foot");if(!f)return;
-  f.innerHTML=`<span>${dbOK?"Riwayat tersimpan di akun ini dan bisa dibuka dari perangkat lain.":"Riwayat tersimpan di browser ini."}</span>`+
+  f.innerHTML=`<span>${famCode?(linkErr?`⚠️ ${linkErr}`:dbOK?`Riwayat tersimpan online (kode ${famCode}).`:"Menyambungkan ke Firebase…"):"Riwayat tersimpan di browser ini saja."}</span>`+
     (view.name==="home"&&(attempts.length||sessions.length)?(confirmReset?`<span class="row">Hapus semua riwayat? <button class="btn p" id="ry">Ya, hapus</button><button class="btn" id="rn">Batal</button></span>`:`<button class="linkbtn" id="ra">Hapus riwayat</button>`):"");
   if($("#ra"))$("#ra").onclick=()=>{confirmReset=true;renderFoot()};
   if($("#rn"))$("#rn").onclick=()=>{confirmReset=false;renderFoot()};
@@ -652,6 +812,7 @@ function renderFoot(){
 fetch("bank.json").then(r=>r.json()).then(b=>{
   BANK=b;TOPICS=b.topics;b.questions.forEach(q=>QBY[q.id]=q);b.passages.forEach(p=>PSG[p.id]=p);
   go({name:"home"});initDb();
+  $("#raporBtn").onclick=()=>go({name:"rapor"});
   addEventListener("pagehide",()=>{if(view.name==="play"&&play&&!play.summary)saveActive()});
   document.addEventListener("visibilitychange",()=>{if(document.hidden&&view.name==="play"&&play&&!play.summary)saveActive()});
 }).catch(()=>{$("#app").innerHTML=`<div class="card">Soal belum bisa dimuat. Coba muat ulang halaman.</div>`});
